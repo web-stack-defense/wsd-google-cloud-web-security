@@ -1,0 +1,46 @@
+# OS metadata
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor and IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Local environment files
+.env
+.env.local
+*.local
+
+# Backups
+*.bak
+*.backup
+*.orig
+*.tmp
+
+# Logs
+*.log
+
+# Google Cloud credentials and configuration (never commit)
+*.json
+!examples/*.json
+key.json
+service-account-key.json
+service-account.json
+application_default_credentials.json
+adc.json
+.gcloudignore
+.gcp/
+gcp-credentials/
+
+# Real config files
+real-policy.yaml
+production-*.yaml
+
+# Private notes and drafts
+notes/private/
+drafts/
+*.draft.md

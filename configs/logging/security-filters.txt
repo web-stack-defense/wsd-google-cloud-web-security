@@ -1,0 +1,264 @@
+# =============================================================================
+# Cloud Logging — Web Workload Security Filters
+#
+# Repository: wsd-google-cloud-web-security
+# Maintained as part of Web Stack Defense — https://www.webstackdefense.com
+#
+# Reference Cloud Logging filter expressions for surfacing the events
+# that matter on web workloads:
+#
+#   - Cloud Armor blocked or challenged requests
+#   - Load balancer 4xx and 5xx response spikes
+#   - IAM permission changes (admin activity)
+#   - IAP authentication failures
+#   - Secret Manager access events
+#
+# Each filter can be used directly in the Cloud Console Logs Explorer or
+# as the `--log-filter` argument to `gcloud logging read`.
+#
+# Reference: https://cloud.google.com/logging/docs/view/logging-query-language
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# Environment setup
+# -----------------------------------------------------------------------------
+# Replace PROJECT_ID with your GCP project ID before running gcloud
+# logging read commands.
+# -----------------------------------------------------------------------------
+
+
+# =============================================================================
+# Filter 1 — Cloud Armor blocked requests (last hour)
+# =============================================================================
+# Returns requests blocked by Cloud Armor in the last hour. Use to verify
+# the WAF is matching expected attack patterns.
+#
+# Cloud Armor events appear in load balancer logs under jsonPayload
+# with enforcedSecurityPolicy showing the rule outcome.
+# -----------------------------------------------------------------------------
+
+# Log filter (paste into Cloud Console Logs Explorer):
+#
+#   resource.type="http_load_balancer"
+#   jsonPayload.enforcedSecurityPolicy.outcome="DENY"
+#   timestamp >= "1h"
+#
+# gcloud equivalent:
+#
+#   gcloud logging read \
+#     'resource.type="http_load_balancer" AND
+#      jsonPayload.enforcedSecurityPolicy.outcome="DENY" AND
+#      timestamp >= "'"$(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%SZ)"'"' \
+#     --project=${PROJECT_ID} \
+#     --limit=100 \
+#     --format=json
+
+
+# =============================================================================
+# Filter 2 — Cloud Armor preview mode matches
+# =============================================================================
+# Returns requests that would have been blocked if the rule were not in
+# preview mode. Critical during the tuning phase of WAF deployment.
+# -----------------------------------------------------------------------------
+
+# Log filter:
+#
+#   resource.type="http_load_balancer"
+#   jsonPayload.previewSecurityPolicy.outcome="DENY"
+#
+# This surfaces matches against rules in preview. Review these for false
+# positives before promoting rules out of preview.
+
+
+# =============================================================================
+# Filter 3 — Load balancer 5xx response spikes
+# =============================================================================
+# Returns 5xx responses from the load balancer. A sudden spike usually
+# indicates a backend issue, not an attack — but the same filter is
+# useful for distinguishing legitimate 5xx (backend down) from blocked
+# requests (4xx with security policy outcome).
+# -----------------------------------------------------------------------------
+
+# Log filter:
+#
+#   resource.type="http_load_balancer"
+#   httpRequest.status >= 500
+#   httpRequest.status < 600
+#
+# To count 5xx per minute:
+#
+#   resource.type="http_load_balancer"
+#   httpRequest.status >= 500
+#   httpRequest.status < 600
+#   timestamp >= "10m"
+
+
+# =============================================================================
+# Filter 4 — 403 responses (Cloud Armor blocks)
+# =============================================================================
+# Cloud Armor with action=deny-403 returns HTTP 403. This filter shows
+# all 403 responses on the load balancer, which includes Cloud Armor
+# blocks (and also any application-level 403 responses).
+# -----------------------------------------------------------------------------
+
+# Log filter:
+#
+#   resource.type="http_load_balancer"
+#   httpRequest.status=403
+#
+# To separate Cloud Armor blocks from application 403s, combine with
+# the enforcedSecurityPolicy.outcome filter from Filter 1.
+
+
+# =============================================================================
+# Filter 5 — IAM policy changes (admin activity log)
+# =============================================================================
+# Surfaces every IAM binding change in the project. IAM grants and
+# revokes are high-signal events that should be monitored.
+# -----------------------------------------------------------------------------
+
+# Log filter:
+#
+#   protoPayload.methodName=("SetIamPolicy" OR "setIamPolicy")
+#   protoPayload.serviceName=("iam.googleapis.com" OR
+#                             "cloudresourcemanager.googleapis.com")
+#
+# Result shows: who changed IAM, on what resource, when.
+#
+# gcloud equivalent:
+#
+#   gcloud logging read \
+#     'protoPayload.methodName=("SetIamPolicy" OR "setIamPolicy")' \
+#     --project=${PROJECT_ID} \
+#     --limit=20 \
+#     --format="table(timestamp,
+#                     protoPayload.authenticationInfo.principalEmail,
+#                     protoPayload.resourceName,
+#                     protoPayload.methodName)"
+
+
+# =============================================================================
+# Filter 6 — Service account key creation
+# =============================================================================
+# Surfaces creation of service account keys. Service account keys are a
+# common credential exfiltration target. Key creation should be rare and
+# expected — every creation event deserves a manual review.
+# -----------------------------------------------------------------------------
+
+# Log filter:
+#
+#   protoPayload.methodName="google.iam.admin.v1.CreateServiceAccountKey"
+
+
+# =============================================================================
+# Filter 7 — Secret Manager access (data access log)
+# =============================================================================
+# IMPORTANT: Secret Manager DATA access events are NOT logged by default.
+# Data Access logs must be explicitly enabled.
+#
+# To enable Data Access logging for Secret Manager:
+#
+#   1. Console: Logging > Audit logs
+#   2. Find "Secret Manager"
+#   3. Enable Data Read, Data Write, Admin Read
+#
+# After enabling, this filter shows secret access events:
+# -----------------------------------------------------------------------------
+
+# Log filter:
+#
+#   protoPayload.serviceName="secretmanager.googleapis.com"
+#   protoPayload.methodName=~ "AccessSecretVersion"
+
+
+# =============================================================================
+# Filter 8 — IAP authentication failures
+# =============================================================================
+# IAP authentication failures (denied at IAP, not at backend) appear in
+# the iap_audit log. Useful for detecting credential stuffing or
+# unauthorized access attempts to admin endpoints.
+# -----------------------------------------------------------------------------
+
+# Log filter:
+#
+#   resource.type="iap_web"
+#   severity=WARNING
+
+
+# =============================================================================
+# Filter 9 — Cloud Run service revision deployments
+# =============================================================================
+# Shows new revisions deployed to Cloud Run. Useful for correlating
+# security events with recent deployments.
+# -----------------------------------------------------------------------------
+
+# Log filter:
+#
+#   resource.type="cloud_run_revision"
+#   protoPayload.methodName="google.cloud.run.v1.Services.ReplaceService"
+
+
+# =============================================================================
+# Filter 10 — Top blocked source IPs by Cloud Armor (last 24 hours)
+# =============================================================================
+# Aggregates blocked requests by source IP. Requires log-based metrics
+# or BigQuery export — this filter alone returns the raw events, which
+# you can then aggregate.
+# -----------------------------------------------------------------------------
+
+# Log filter (raw events):
+#
+#   resource.type="http_load_balancer"
+#   jsonPayload.enforcedSecurityPolicy.outcome="DENY"
+#   timestamp >= "24h"
+#
+# To aggregate by source IP, use Logs Analytics in Cloud Console or
+# export to BigQuery and run:
+#
+#   SELECT
+#     httpRequest.remoteIp,
+#     COUNT(*) AS block_count
+#   FROM `PROJECT_ID.DATASET.LOG_TABLE`
+#   WHERE jsonPayload.enforcedSecurityPolicy.outcome = "DENY"
+#     AND timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
+#   GROUP BY httpRequest.remoteIp
+#   ORDER BY block_count DESC
+#   LIMIT 50
+
+
+# =============================================================================
+# Creating log-based metrics from these filters
+# =============================================================================
+# Cloud Monitoring can create metrics from log filters. Useful for
+# alerting on threshold breaches.
+#
+# Create a metric for Cloud Armor blocks:
+#
+#   gcloud logging metrics create cloud-armor-blocks \
+#     --description="Count of Cloud Armor blocks" \
+#     --log-filter='resource.type="http_load_balancer"
+#                   jsonPayload.enforcedSecurityPolicy.outcome="DENY"' \
+#     --project=${PROJECT_ID}
+#
+# Then create an alert policy in Cloud Monitoring that fires when the
+# metric exceeds a threshold (e.g., >100 blocks per minute = likely
+# automated attack).
+# =============================================================================
+
+
+# =============================================================================
+# Log retention
+# =============================================================================
+# Default Cloud Logging retention for the `_Default` bucket is 30 days.
+# For security work, 90 days minimum is recommended. Configure custom
+# retention:
+#
+#   gcloud logging buckets update _Default \
+#     --location=global \
+#     --retention-days=90 \
+#     --project=${PROJECT_ID}
+#
+# For longer retention (e.g., 365 days), consider a custom log bucket
+# or BigQuery export. Beyond 30 days, billing applies.
+# =============================================================================

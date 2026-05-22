@@ -1,0 +1,390 @@
+# =============================================================================
+# Cloud Armor — OWASP-Aligned Security Policy
+#
+# Repository: wsd-google-cloud-web-security
+# Maintained as part of Web Stack Defense — https://www.webstackdefense.com
+#
+# Reference catalog of Cloud Armor gcloud commands for deploying a Cloud
+# Armor security policy aligned to OWASP CRS 4.22. Every rule is annotated
+# with:
+#
+#   - Rule priority
+#   - Recommended initial action (always START in --preview mode)
+#   - Promoted action (after log review confirms no false positives)
+#   - What it matches and why
+#   - Tuning notes
+#
+# Cloud Armor preconfigured WAF rules can inspect up to 64 KB of the
+# request body. Larger payloads are NOT inspected against these rules.
+#
+# How to use this file:
+#
+#   1. Set environment variables (PROJECT_ID, POLICY_NAME, BACKEND_SERVICE)
+#   2. Run the create command to make the policy
+#   3. Run each rule create command, ALL with --preview initially
+#   4. Attach the policy to your backend service
+#   5. Review Cloud Armor logs for 24-72 hours
+#   6. Run the promote commands to remove --preview from rules
+#
+# Reference: https://cloud.google.com/armor/docs/configure-security-policies
+# Reference: https://cloud.google.com/armor/docs/waf-rules
+# Reference: https://cloud.google.com/armor/docs/rules-language-reference
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# Environment setup
+# -----------------------------------------------------------------------------
+# Replace these placeholder values before running any command. The actual
+# resource names should match your project's naming conventions.
+#
+#   PROJECT_ID         - Your GCP project ID
+#   POLICY_NAME        - Name for the new Cloud Armor security policy
+#   BACKEND_SERVICE    - Name of an existing backend service to attach to
+#
+# Example:
+#
+#   export PROJECT_ID="my-project-12345"
+#   export POLICY_NAME="web-app-armor-policy"
+#   export BACKEND_SERVICE="web-app-backend"
+#
+# Confirm the active project before running commands:
+#
+#   gcloud config set project ${PROJECT_ID}
+#   gcloud config list
+# -----------------------------------------------------------------------------
+
+
+# -----------------------------------------------------------------------------
+# Step 1 — Create the security policy
+# -----------------------------------------------------------------------------
+# Creates a new empty policy. The default rule (priority 2147483647) is
+# created automatically with action "allow". We will tighten this later.
+# -----------------------------------------------------------------------------
+
+# gcloud compute security-policies create ${POLICY_NAME} \
+#   --description "OWASP-aligned WAF policy for web application backend" \
+#   --project=${PROJECT_ID}
+
+
+# -----------------------------------------------------------------------------
+# Rule 1000 — Block SQL injection (OWASP CRS 4.22)
+# -----------------------------------------------------------------------------
+# Priority:                    1000
+# Recommended initial action:  --action=deny-403 --preview
+# Recommended promoted action: --action=deny-403 (remove --preview)
+# Sensitivity:                 1 (high confidence, low false positive)
+#
+# Matches requests that trigger the SQL injection signatures in CRS 4.22
+# at paranoia level 1.
+#
+# False-positive risk: Low at sensitivity 1. Search endpoints that accept
+# SQL-like terms (`select`, `union`, etc.) in query strings may match.
+#
+# Tuning: If false positives appear, see configure-waf.txt for the
+# `opt_in_rule_ids` and `exclude_ids` patterns to tune individual signatures.
+# -----------------------------------------------------------------------------
+
+# gcloud compute security-policies rules create 1000 \
+#   --security-policy=${POLICY_NAME} \
+#   --description="Block SQL injection (CRS 4.22, sensitivity 1)" \
+#   --expression="evaluatePreconfiguredWaf('sqli-v422-stable', {'sensitivity': 1})" \
+#   --action=deny-403 \
+#   --preview \
+#   --project=${PROJECT_ID}
+
+
+# -----------------------------------------------------------------------------
+# Rule 1100 — Block XSS (OWASP CRS 4.22)
+# -----------------------------------------------------------------------------
+# Priority: 1100
+# Recommended initial action:  --action=deny-403 --preview
+# Recommended promoted action: --action=deny-403
+# Sensitivity: 1
+# -----------------------------------------------------------------------------
+
+# gcloud compute security-policies rules create 1100 \
+#   --security-policy=${POLICY_NAME} \
+#   --description="Block cross-site scripting (CRS 4.22, sensitivity 1)" \
+#   --expression="evaluatePreconfiguredWaf('xss-v422-stable', {'sensitivity': 1})" \
+#   --action=deny-403 \
+#   --preview \
+#   --project=${PROJECT_ID}
+
+
+# -----------------------------------------------------------------------------
+# Rule 1200 — Block local file inclusion (OWASP CRS 4.22)
+# -----------------------------------------------------------------------------
+# Priority: 1200
+# Sensitivity: 1
+# -----------------------------------------------------------------------------
+
+# gcloud compute security-policies rules create 1200 \
+#   --security-policy=${POLICY_NAME} \
+#   --description="Block local file inclusion (CRS 4.22, sensitivity 1)" \
+#   --expression="evaluatePreconfiguredWaf('lfi-v422-stable', {'sensitivity': 1})" \
+#   --action=deny-403 \
+#   --preview \
+#   --project=${PROJECT_ID}
+
+
+# -----------------------------------------------------------------------------
+# Rule 1300 — Block remote file inclusion (OWASP CRS 4.22)
+# -----------------------------------------------------------------------------
+# Priority: 1300
+# Sensitivity: 1
+# -----------------------------------------------------------------------------
+
+# gcloud compute security-policies rules create 1300 \
+#   --security-policy=${POLICY_NAME} \
+#   --description="Block remote file inclusion (CRS 4.22, sensitivity 1)" \
+#   --expression="evaluatePreconfiguredWaf('rfi-v422-stable', {'sensitivity': 1})" \
+#   --action=deny-403 \
+#   --preview \
+#   --project=${PROJECT_ID}
+
+
+# -----------------------------------------------------------------------------
+# Rule 1400 — Block remote code execution (OWASP CRS 4.22)
+# -----------------------------------------------------------------------------
+# Priority: 1400
+# Sensitivity: 1
+# -----------------------------------------------------------------------------
+
+# gcloud compute security-policies rules create 1400 \
+#   --security-policy=${POLICY_NAME} \
+#   --description="Block remote code execution (CRS 4.22, sensitivity 1)" \
+#   --expression="evaluatePreconfiguredWaf('rce-v422-stable', {'sensitivity': 1})" \
+#   --action=deny-403 \
+#   --preview \
+#   --project=${PROJECT_ID}
+
+
+# -----------------------------------------------------------------------------
+# Rule 1500 — Block scanner / probing tools (OWASP CRS 4.22)
+# -----------------------------------------------------------------------------
+# Priority: 1500
+# Sensitivity: 1
+#
+# Matches known scanner User-Agent strings and probe patterns. Equivalent
+# to the User-Agent and tool-detection signatures in CRS.
+# -----------------------------------------------------------------------------
+
+# gcloud compute security-policies rules create 1500 \
+#   --security-policy=${POLICY_NAME} \
+#   --description="Block scanners (CRS 4.22, sensitivity 1)" \
+#   --expression="evaluatePreconfiguredWaf('scannerdetection-v422-stable', {'sensitivity': 1})" \
+#   --action=deny-403 \
+#   --preview \
+#   --project=${PROJECT_ID}
+
+
+# -----------------------------------------------------------------------------
+# Rule 1600 — Block protocol attack patterns (OWASP CRS 4.22)
+# -----------------------------------------------------------------------------
+# Priority: 1600
+# Sensitivity: 1
+#
+# Matches HTTP protocol-level attack patterns: header injection, request
+# smuggling indicators, malformed request lines.
+# -----------------------------------------------------------------------------
+
+# gcloud compute security-policies rules create 1600 \
+#   --security-policy=${POLICY_NAME} \
+#   --description="Block protocol attacks (CRS 4.22, sensitivity 1)" \
+#   --expression="evaluatePreconfiguredWaf('protocolattack-v422-stable', {'sensitivity': 1})" \
+#   --action=deny-403 \
+#   --preview \
+#   --project=${PROJECT_ID}
+
+
+# -----------------------------------------------------------------------------
+# Rule 1700 — Block session fixation attempts (OWASP CRS 4.22)
+# -----------------------------------------------------------------------------
+# Priority: 1700
+# Sensitivity: 1
+# -----------------------------------------------------------------------------
+
+# gcloud compute security-policies rules create 1700 \
+#   --security-policy=${POLICY_NAME} \
+#   --description="Block session fixation (CRS 4.22, sensitivity 1)" \
+#   --expression="evaluatePreconfiguredWaf('sessionfixation-v422-stable', {'sensitivity': 1})" \
+#   --action=deny-403 \
+#   --preview \
+#   --project=${PROJECT_ID}
+
+
+# -----------------------------------------------------------------------------
+# Rule 1800 — Block known Java vulnerabilities (Log4j, etc.)
+# -----------------------------------------------------------------------------
+# Priority: 1800
+# Sensitivity: 1
+#
+# Cloud Armor maintains additional cve-canary rules for high-severity
+# vulnerabilities. The cve-canary rule includes Log4j (CVE-2021-44228,
+# CVE-2021-45046) and updates over time.
+# -----------------------------------------------------------------------------
+
+# gcloud compute security-policies rules create 1800 \
+#   --security-policy=${POLICY_NAME} \
+#   --description="Block known CVE patterns (cve-canary)" \
+#   --expression="evaluatePreconfiguredWaf('cve-canary', {'sensitivity': 1})" \
+#   --action=deny-403 \
+#   --preview \
+#   --project=${PROJECT_ID}
+
+
+# -----------------------------------------------------------------------------
+# Rule 2000 — Rate limit on login endpoints
+# -----------------------------------------------------------------------------
+# Priority: 2000
+# Action: rate-based-ban
+#
+# Rate-limits requests to common login endpoints. Requests exceeding the
+# threshold are banned for the configured duration.
+#
+# Threshold: 5 requests per 60 seconds
+# Ban duration: 600 seconds (10 minutes)
+# Enforced on: IP address
+#
+# Tuning: Adjust threshold based on expected login traffic. Shared corporate
+# IPs may exceed 5/60s if many users log in simultaneously.
+# -----------------------------------------------------------------------------
+
+# gcloud compute security-policies rules create 2000 \
+#   --security-policy=${POLICY_NAME} \
+#   --description="Rate-limit login endpoints" \
+#   --expression="request.path.matches('/(login|signin|wp-login.php|admin)') && request.method == 'POST'" \
+#   --action=rate-based-ban \
+#   --rate-limit-threshold-count=5 \
+#   --rate-limit-threshold-interval-sec=60 \
+#   --ban-duration-sec=600 \
+#   --conform-action=allow \
+#   --exceed-action=deny-429 \
+#   --enforce-on-key=IP \
+#   --preview \
+#   --project=${PROJECT_ID}
+
+
+# -----------------------------------------------------------------------------
+# Rule 2100 — General rate limit on POST requests
+# -----------------------------------------------------------------------------
+# Priority: 2100
+# Action: throttle (less aggressive than rate-based-ban)
+#
+# General-purpose POST rate limit. Catches form abuse and automated
+# submissions without aggressively banning.
+# -----------------------------------------------------------------------------
+
+# gcloud compute security-policies rules create 2100 \
+#   --security-policy=${POLICY_NAME} \
+#   --description="Throttle POST requests per IP" \
+#   --expression="request.method == 'POST'" \
+#   --action=throttle \
+#   --rate-limit-threshold-count=60 \
+#   --rate-limit-threshold-interval-sec=60 \
+#   --conform-action=allow \
+#   --exceed-action=deny-429 \
+#   --enforce-on-key=IP \
+#   --preview \
+#   --project=${PROJECT_ID}
+
+
+# -----------------------------------------------------------------------------
+# Step 3 — Attach the policy to a backend service
+# -----------------------------------------------------------------------------
+# After the policy and rules are created, attach the policy to the
+# backend service. The policy takes effect for traffic to that backend.
+#
+# For global backend services:
+# -----------------------------------------------------------------------------
+
+# gcloud compute backend-services update ${BACKEND_SERVICE} \
+#   --security-policy=${POLICY_NAME} \
+#   --global \
+#   --project=${PROJECT_ID}
+
+# For regional backend services:
+#
+# gcloud compute backend-services update ${BACKEND_SERVICE} \
+#   --security-policy=${POLICY_NAME} \
+#   --region=REGION \
+#   --project=${PROJECT_ID}
+
+
+# -----------------------------------------------------------------------------
+# Step 4 — Monitor in preview mode
+# -----------------------------------------------------------------------------
+# Cloud Armor with --preview logs what WOULD be blocked without actually
+# blocking traffic. Review the logs to identify:
+#
+#   - Rules that match expected attacks (good)
+#   - Rules that match legitimate traffic (false positives, need tuning)
+#
+# View matched requests:
+#
+#   gcloud logging read \
+#     'jsonPayload.@type="type.googleapis.com/google.cloud.armor.SecurityRequest"' \
+#     --project=${PROJECT_ID} \
+#     --limit=100 \
+#     --format=json
+#
+# Or use the Cloud Console:
+#   Logging > Logs Explorer > resource.type="http_load_balancer"
+# -----------------------------------------------------------------------------
+
+
+# -----------------------------------------------------------------------------
+# Step 5 — Promote rules out of preview
+# -----------------------------------------------------------------------------
+# After log review confirms a rule is matching only malicious traffic,
+# remove the --preview flag.
+#
+# Promote one rule at a time, verify, then promote the next. Promoting
+# all rules at once removes the ability to identify which rule caused
+# any incident.
+# -----------------------------------------------------------------------------
+
+# gcloud compute security-policies rules update 1000 \
+#   --security-policy=${POLICY_NAME} \
+#   --no-preview \
+#   --project=${PROJECT_ID}
+
+# Repeat for each rule priority: 1100, 1200, 1300, 1400, 1500, 1600, 1700,
+# 1800, 2000, 2100
+
+
+# -----------------------------------------------------------------------------
+# Optional: Tighten the default rule
+# -----------------------------------------------------------------------------
+# The default rule (priority 2147483647) is created with action "allow"
+# automatically. For high-security workloads, you may want to change the
+# default to deny everything that isn't explicitly allowed.
+#
+# DO NOT change the default to deny unless you have explicit allow rules
+# in place for legitimate traffic. Changing default to deny without
+# allow rules takes the site offline.
+#
+# gcloud compute security-policies rules update 2147483647 \
+#   --security-policy=${POLICY_NAME} \
+#   --action=deny-403 \
+#   --project=${PROJECT_ID}
+# -----------------------------------------------------------------------------
+
+
+# =============================================================================
+# Deployment checklist
+# =============================================================================
+#
+# [ ] Confirm gcloud is authenticated to the correct project
+# [ ] Confirm BACKEND_SERVICE exists and is the correct target
+# [ ] Create the policy (Step 1)
+# [ ] Create all rules with --preview (Steps 1000-2100)
+# [ ] Attach the policy to the backend service (Step 3)
+# [ ] Wait 24 to 72 hours
+# [ ] Review Cloud Armor security logs for matches
+# [ ] Identify and tune false positives (see configure-waf-tuning.txt)
+# [ ] Promote rules one at a time with --no-preview
+# [ ] Document the deployment with timestamps
+# [ ] Schedule quarterly review of rule effectiveness
+# =============================================================================

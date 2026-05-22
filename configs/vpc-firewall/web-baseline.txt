@@ -1,0 +1,217 @@
+# =============================================================================
+# VPC Firewall Rules — Web Workload Baseline
+#
+# Repository: wsd-google-cloud-web-security
+# Maintained as part of Web Stack Defense — https://www.webstackdefense.com
+#
+# Reference VPC firewall rules for a typical web-facing GCP deployment.
+# These rules establish a minimal-ingress baseline for Compute Engine
+# instances that serve a web application behind a load balancer.
+#
+# For Cloud Run, Cloud Functions, and App Engine, network ingress is
+# governed by IAM and ingress settings on the service itself — VPC
+# firewall rules apply only if VPC connector or direct VPC egress is
+# in use.
+#
+# Rule priority in GCP VPC firewall:
+#   - Lower number = higher priority
+#   - 0 is highest, 65535 is lowest
+#   - When rules conflict, the lower-numbered rule wins
+#   - Implied allow-egress and deny-ingress sit at priority 65535
+#
+# Reference: https://cloud.google.com/firewall/docs/firewalls
+# Reference: https://cloud.google.com/load-balancing/docs/health-check-concepts
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# Environment setup
+# -----------------------------------------------------------------------------
+# Replace these placeholder values before running any command:
+#
+#   PROJECT_ID   - Your GCP project ID
+#   NETWORK      - VPC network name (typically "default" or custom)
+#
+# All rules below assume target tags for selective application:
+#   web-frontend  - Applied to web-serving instances
+#   bastion       - Applied to bastion / jump host instances (if any)
+# -----------------------------------------------------------------------------
+
+
+# -----------------------------------------------------------------------------
+# Rule 1 — Allow load balancer health checks (priority 100)
+# -----------------------------------------------------------------------------
+# Google Cloud load balancers send health-check probes from a specific
+# set of IP ranges. Without an allow rule for these ranges, the load
+# balancer marks backends as UNHEALTHY and stops sending traffic.
+#
+# Health check source ranges (current, verify against documentation):
+#   35.191.0.0/16     - Health check probers
+#   130.211.0.0/22    - Health check probers (legacy range, still in use)
+#
+# These ranges are documented here:
+# https://cloud.google.com/load-balancing/docs/health-check-concepts#ip-ranges
+# -----------------------------------------------------------------------------
+
+# gcloud compute firewall-rules create allow-lb-health-checks \
+#   --direction=INGRESS \
+#   --action=ALLOW \
+#   --priority=100 \
+#   --network=${NETWORK} \
+#   --source-ranges=35.191.0.0/16,130.211.0.0/22 \
+#   --target-tags=web-frontend \
+#   --rules=tcp:80,tcp:443 \
+#   --description="Allow GCP load balancer health checks" \
+#   --project=${PROJECT_ID}
+
+
+# -----------------------------------------------------------------------------
+# Rule 2 — Allow web traffic from the Google Front End (priority 200)
+# -----------------------------------------------------------------------------
+# For instances behind a global external Application Load Balancer, the
+# GFE proxies all traffic. The GFE source ranges overlap with the health
+# check ranges — keep both rules for clarity, even though one allow rule
+# covering both ranges would also work.
+#
+# Some operators apply Cloud Armor at the load balancer AND restrict
+# origin firewall to load balancer ranges, achieving defense in depth
+# similar to the "Cloudflare-only" pattern but Google-native.
+#
+# Note: this rule applies only to backends that receive traffic through
+# a load balancer. For Cloud Run / App Engine / Cloud Functions, ingress
+# is controlled by service-level ingress settings, not VPC firewall.
+# -----------------------------------------------------------------------------
+
+# gcloud compute firewall-rules create allow-lb-frontend \
+#   --direction=INGRESS \
+#   --action=ALLOW \
+#   --priority=200 \
+#   --network=${NETWORK} \
+#   --source-ranges=35.191.0.0/16,130.211.0.0/22 \
+#   --target-tags=web-frontend \
+#   --rules=tcp:80,tcp:443 \
+#   --description="Allow web traffic from GCP load balancer" \
+#   --project=${PROJECT_ID}
+
+
+# -----------------------------------------------------------------------------
+# Rule 3 — Allow SSH from IAP for admin access (priority 300)
+# -----------------------------------------------------------------------------
+# Identity-Aware Proxy TCP forwarding allows SSH to instances without
+# exposing port 22 to the public internet. The IAP source range is
+# documented and stable.
+#
+# IAP TCP forwarding source range:
+#   35.235.240.0/20
+#
+# This is the recommended pattern for SSH access to GCE instances —
+# combined with proper IAM (roles/iap.tunnelResourceAccessor for the
+# admin), it provides authenticated, audited SSH access without
+# exposing port 22 to the internet.
+# -----------------------------------------------------------------------------
+
+# gcloud compute firewall-rules create allow-ssh-from-iap \
+#   --direction=INGRESS \
+#   --action=ALLOW \
+#   --priority=300 \
+#   --network=${NETWORK} \
+#   --source-ranges=35.235.240.0/20 \
+#   --rules=tcp:22 \
+#   --description="Allow SSH from IAP tunnel only" \
+#   --project=${PROJECT_ID}
+
+
+# -----------------------------------------------------------------------------
+# Rule 4 — Deny direct SSH from the public internet (priority 400)
+# -----------------------------------------------------------------------------
+# Explicit deny rule for SSH from 0.0.0.0/0. This is redundant if no
+# allow rule for SSH from public sources exists — the implied deny-ingress
+# at priority 65535 catches anything not explicitly allowed.
+#
+# However, an explicit deny at higher priority makes the intent visible
+# in firewall audits and catches accidental "allow all" rules that might
+# be added later.
+# -----------------------------------------------------------------------------
+
+# gcloud compute firewall-rules create deny-public-ssh \
+#   --direction=INGRESS \
+#   --action=DENY \
+#   --priority=400 \
+#   --network=${NETWORK} \
+#   --source-ranges=0.0.0.0/0 \
+#   --rules=tcp:22 \
+#   --description="Explicitly deny SSH from public internet (use IAP)" \
+#   --project=${PROJECT_ID}
+
+
+# -----------------------------------------------------------------------------
+# Rule 5 — Deny direct public access to web ports on origin (priority 500)
+# -----------------------------------------------------------------------------
+# Explicit deny for direct public access to web ports on Compute Engine
+# instances. Combined with the LB-only allow rule above, this ensures
+# all web traffic flows through the load balancer (and Cloud Armor).
+#
+# This is the GCP equivalent of the "lock origin to Cloudflare IPs" pattern
+# in the WAF & Edge repository. With this rule in place, the origin
+# instance is not reachable directly on HTTP/HTTPS — only via the load
+# balancer.
+# -----------------------------------------------------------------------------
+
+# gcloud compute firewall-rules create deny-public-web \
+#   --direction=INGRESS \
+#   --action=DENY \
+#   --priority=500 \
+#   --network=${NETWORK} \
+#   --source-ranges=0.0.0.0/0 \
+#   --target-tags=web-frontend \
+#   --rules=tcp:80,tcp:443 \
+#   --description="Deny direct web access to origin (LB-only enforcement)" \
+#   --project=${PROJECT_ID}
+
+
+# -----------------------------------------------------------------------------
+# Reviewing firewall rules
+# -----------------------------------------------------------------------------
+# List all firewall rules in the project:
+#
+#   gcloud compute firewall-rules list --project=${PROJECT_ID}
+#
+# List rules sorted by priority:
+#
+#   gcloud compute firewall-rules list --project=${PROJECT_ID} \
+#     --sort-by=priority
+#
+# Describe a specific rule:
+#
+#   gcloud compute firewall-rules describe RULE_NAME --project=${PROJECT_ID}
+#
+# Find rules that allow 0.0.0.0/0 access (potential exposure):
+#
+#   gcloud compute firewall-rules list --project=${PROJECT_ID} \
+#     --filter="sourceRanges:0.0.0.0/0 AND direction:INGRESS" \
+#     --format="table(name,priority,sourceRanges.list():label=SRC,allowed[].map().firewall_rule().list():label=ALLOW)"
+# -----------------------------------------------------------------------------
+
+
+# -----------------------------------------------------------------------------
+# Notes on Cloud Run / App Engine / Cloud Functions
+# -----------------------------------------------------------------------------
+# These serverless products do not use VPC firewall rules for ingress
+# control by default. Ingress is controlled at the service level:
+#
+# Cloud Run ingress options:
+#   - all (default)             : reachable from anywhere
+#   - internal                  : VPC and direct VPC egress sources only
+#   - internal-and-cloud-load-balancing : LB and VPC sources only
+#
+# For a Cloud Run service that should only be reachable through a load
+# balancer (with Cloud Armor attached), set:
+#
+#   gcloud run services update SERVICE_NAME \
+#     --ingress=internal-and-cloud-load-balancing \
+#     --region=REGION \
+#     --project=${PROJECT_ID}
+#
+# This achieves the equivalent of locking the origin to the LB without
+# any VPC firewall configuration.
+# -----------------------------------------------------------------------------

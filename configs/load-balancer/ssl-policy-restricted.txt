@@ -1,0 +1,178 @@
+# =============================================================================
+# HTTPS Load Balancer Hardening
+#
+# Repository: wsd-google-cloud-web-security
+# Maintained as part of Web Stack Defense — https://www.webstackdefense.com
+#
+# Reference commands for hardening Google Cloud HTTPS load balancers:
+#
+#   - SSL policy with the RESTRICTED profile (TLS 1.2+, AEAD only)
+#   - Attaching SSL policy to a target HTTPS proxy
+#   - Attaching Cloud Armor security policy to backend services
+#
+# SSL policy profile options:
+#
+#   COMPATIBLE  - Allows older clients. Broadest compatibility.
+#   MODERN      - Modern profile, blocks the oldest clients.
+#   RESTRICTED  - Strictest. TLS 1.2 minimum, AEAD-only ciphers.
+#
+# RESTRICTED is the right default for new web deployments. It blocks
+# clients that cannot support modern TLS, which in 2026 is essentially
+# only legacy embedded systems and bots using outdated TLS libraries.
+#
+# Reference: https://cloud.google.com/load-balancing/docs/use-ssl-policies
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# Environment setup
+# -----------------------------------------------------------------------------
+# Replace these placeholder values:
+#
+#   PROJECT_ID         - Your GCP project ID
+#   SSL_POLICY_NAME    - Name for the new SSL policy
+#   TARGET_HTTPS_PROXY - Name of the existing target HTTPS proxy
+#   BACKEND_SERVICE    - Name of the existing backend service
+#   ARMOR_POLICY       - Name of an existing Cloud Armor policy
+#   REGION             - Region for regional resources
+# -----------------------------------------------------------------------------
+
+
+# =============================================================================
+# Part 1 — Create a global SSL policy with the RESTRICTED profile
+# =============================================================================
+# Creates an SSL policy that enforces TLS 1.2 minimum and only AEAD ciphers.
+# This policy can be attached to one or more target HTTPS proxies.
+# -----------------------------------------------------------------------------
+
+# gcloud compute ssl-policies create ${SSL_POLICY_NAME} \
+#   --profile=RESTRICTED \
+#   --min-tls-version=1.2 \
+#   --description="Restrict TLS to 1.2+ with AEAD ciphers only" \
+#   --project=${PROJECT_ID}
+
+# For a regional SSL policy (used with regional Application Load Balancers):
+#
+# gcloud compute ssl-policies create ${SSL_POLICY_NAME} \
+#   --profile=RESTRICTED \
+#   --min-tls-version=1.2 \
+#   --region=${REGION} \
+#   --description="Restrict TLS to 1.2+ with AEAD ciphers only" \
+#   --project=${PROJECT_ID}
+
+
+# =============================================================================
+# Part 2 — Attach the SSL policy to a target HTTPS proxy
+# =============================================================================
+# An SSL policy takes effect when attached to a target proxy. Without
+# attachment, the policy exists but does not affect any traffic.
+# -----------------------------------------------------------------------------
+
+# Global target HTTPS proxy:
+#
+# gcloud compute target-https-proxies update ${TARGET_HTTPS_PROXY} \
+#   --ssl-policy=${SSL_POLICY_NAME} \
+#   --project=${PROJECT_ID}
+
+# Regional target HTTPS proxy:
+#
+# gcloud compute target-https-proxies update ${TARGET_HTTPS_PROXY} \
+#   --ssl-policy=${SSL_POLICY_NAME} \
+#   --region=${REGION} \
+#   --project=${PROJECT_ID}
+
+
+# =============================================================================
+# Part 3 — Attach a Cloud Armor security policy to a backend service
+# =============================================================================
+# Cloud Armor security policies are attached to backend services, not to
+# the load balancer itself or the URL map. One policy can be attached to
+# multiple backend services.
+# -----------------------------------------------------------------------------
+
+# Global backend service:
+#
+# gcloud compute backend-services update ${BACKEND_SERVICE} \
+#   --security-policy=${ARMOR_POLICY} \
+#   --global \
+#   --project=${PROJECT_ID}
+
+# Regional backend service:
+#
+# gcloud compute backend-services update ${BACKEND_SERVICE} \
+#   --security-policy=${ARMOR_POLICY} \
+#   --region=${REGION} \
+#   --project=${PROJECT_ID}
+
+
+# =============================================================================
+# Part 4 — Verify SSL policy attachment
+# =============================================================================
+# Confirm the SSL policy is attached to the target proxy.
+# -----------------------------------------------------------------------------
+
+# gcloud compute target-https-proxies describe ${TARGET_HTTPS_PROXY} \
+#   --format="value(sslPolicy)" \
+#   --project=${PROJECT_ID}
+
+# Should return the full resource URL of the SSL policy, not "null".
+
+
+# =============================================================================
+# Part 5 — Verify Cloud Armor policy attachment
+# =============================================================================
+# Confirm the security policy is attached to the backend service.
+# -----------------------------------------------------------------------------
+
+# gcloud compute backend-services describe ${BACKEND_SERVICE} \
+#   --global \
+#   --format="value(securityPolicy)" \
+#   --project=${PROJECT_ID}
+
+# Should return the full resource URL of the security policy, not "null".
+
+
+# =============================================================================
+# Part 6 — Verify the TLS configuration end-to-end
+# =============================================================================
+# Use openssl from outside the load balancer to verify what the public
+# can actually negotiate.
+# -----------------------------------------------------------------------------
+
+# Confirm TLS 1.0 is rejected:
+# echo "" | openssl s_client -connect example.com:443 -tls1 2>&1 | grep -E "no protocols available|alert"
+# Expected: "no protocols available" or "alert" — confirms TLS 1.0 is blocked
+
+# Confirm TLS 1.1 is rejected:
+# echo "" | openssl s_client -connect example.com:443 -tls1_1 2>&1 | grep -E "no protocols available|alert"
+
+# Confirm TLS 1.2 works:
+# echo "" | openssl s_client -connect example.com:443 -tls1_2 2>&1 | grep "Cipher is"
+
+# Confirm TLS 1.3 works:
+# echo "" | openssl s_client -connect example.com:443 -tls1_3 2>&1 | grep "Cipher is"
+
+
+# =============================================================================
+# Notes on the RESTRICTED profile
+# =============================================================================
+#
+# The RESTRICTED profile enforces:
+#
+#   - TLS 1.2 and TLS 1.3 only (TLS 1.0 and 1.1 rejected)
+#   - AEAD cipher suites only (GCM and CHACHA20-POLY1305 modes)
+#   - No CBC-mode ciphers
+#   - No anonymous, weak, or null ciphers
+#
+# Compatibility impact:
+#
+#   - Modern browsers: all supported (Chrome, Firefox, Safari, Edge)
+#   - Modern mobile devices: all supported
+#   - Older Android (5.x and earlier): may fail
+#   - Old IoT and embedded systems with hardcoded TLS 1.0/1.1: WILL FAIL
+#   - Some legacy API clients: WILL FAIL
+#
+# If you have known legacy clients that need TLS 1.0/1.1, choose
+# COMPATIBLE instead, OR run them on a separate backend with a separate
+# SSL policy.
+# =============================================================================

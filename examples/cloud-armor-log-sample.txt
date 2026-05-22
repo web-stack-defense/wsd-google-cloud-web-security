@@ -1,0 +1,183 @@
+================================================================
+  Sample Cloud Armor Security Event Log Entries
+  (Sanitized — all values are placeholders)
+================================================================
+
+These samples show the structure of Cloud Armor security events as
+they appear in Cloud Logging. Use this format to recognize what to
+look for during log review.
+
+Each entry is the relevant portion of a JSON log record from
+resource.type="http_load_balancer", trimmed for readability.
+
+----------------------------------------------------------------
+Sample 1 — Enforced rule block (SQL injection signature match)
+----------------------------------------------------------------
+{
+  "timestamp": "2026-05-19T14:23:11.123456Z",
+  "severity": "WARNING",
+  "resource": {
+    "type": "http_load_balancer",
+    "labels": {
+      "project_id": "PROJECT_ID",
+      "backend_service_name": "web-app-backend",
+      "url_map_name": "web-app-url-map"
+    }
+  },
+  "httpRequest": {
+    "requestMethod": "GET",
+    "requestUrl": "https://example.com/products?id=1' OR '1'='1",
+    "status": 403,
+    "remoteIp": "203.0.113.42",
+    "userAgent": "Mozilla/5.0 (compatible; SQLMap/1.6)"
+  },
+  "jsonPayload": {
+    "enforcedSecurityPolicy": {
+      "name": "web-app-armor-policy",
+      "priority": 1000,
+      "outcome": "DENY",
+      "configuredAction": "DENY",
+      "preconfiguredExprIds": [
+        "owasp-crs-v042200-id942100-sqli"
+      ]
+    }
+  }
+}
+
+Interpretation:
+  Cloud Armor rule at priority 1000 (the SQL injection rule from the
+  reference policy) matched on the request. Configured action was DENY,
+  outcome was DENY, request returned 403. This is the rule working as
+  intended — sqlmap probing for SQL injection vulnerabilities.
+
+----------------------------------------------------------------
+Sample 2 — Preview-mode match (rule would have blocked)
+----------------------------------------------------------------
+{
+  "timestamp": "2026-05-19T14:27:42.654321Z",
+  "severity": "INFO",
+  "resource": {
+    "type": "http_load_balancer",
+    "labels": {
+      "project_id": "PROJECT_ID",
+      "backend_service_name": "web-app-backend"
+    }
+  },
+  "httpRequest": {
+    "requestMethod": "POST",
+    "requestUrl": "https://example.com/wp-admin/admin-ajax.php",
+    "status": 200,
+    "remoteIp": "203.0.113.87",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15"
+  },
+  "jsonPayload": {
+    "previewSecurityPolicy": {
+      "name": "web-app-armor-policy",
+      "priority": 1100,
+      "outcome": "DENY",
+      "configuredAction": "DENY",
+      "preconfiguredExprIds": [
+        "owasp-crs-v042200-id941100-xss"
+      ]
+    }
+  }
+}
+
+Interpretation:
+  Rule at priority 1100 (the XSS rule) in preview mode matched on a
+  POST to wp-admin/admin-ajax.php. Request was allowed (status 200)
+  because the rule is in preview, but the rule would have blocked it
+  if promoted.
+
+  This is a CLASSIC false-positive pattern — admin AJAX endpoints
+  carry rich-text or HTML content that triggers XSS signatures. Before
+  promoting this rule out of preview, add an exclusion for the admin
+  path (see Cloud Armor tuning checklist, Pattern 3).
+
+----------------------------------------------------------------
+Sample 3 — Rate limit triggered
+----------------------------------------------------------------
+{
+  "timestamp": "2026-05-19T14:32:01.789012Z",
+  "severity": "WARNING",
+  "resource": {
+    "type": "http_load_balancer",
+    "labels": {
+      "project_id": "PROJECT_ID",
+      "backend_service_name": "web-app-backend"
+    }
+  },
+  "httpRequest": {
+    "requestMethod": "POST",
+    "requestUrl": "https://example.com/wp-login.php",
+    "status": 429,
+    "remoteIp": "203.0.113.155",
+    "userAgent": "Mozilla/5.0 (compatible; Various)"
+  },
+  "jsonPayload": {
+    "enforcedSecurityPolicy": {
+      "name": "web-app-armor-policy",
+      "priority": 2000,
+      "outcome": "DENY",
+      "configuredAction": "RATE_BASED_BAN",
+      "rateLimitAction": {
+        "exceedAction": "DENY_429"
+      }
+    }
+  }
+}
+
+Interpretation:
+  The login rate limit (priority 2000) triggered. Source IP exceeded
+  5 requests per 60 seconds and is now banned for 600 seconds with
+  HTTP 429 response. Expected behavior during a brute force attempt.
+
+----------------------------------------------------------------
+Sample 4 — Allow (no rule matched, default rule applied)
+----------------------------------------------------------------
+{
+  "timestamp": "2026-05-19T14:35:18.456789Z",
+  "severity": "INFO",
+  "resource": {
+    "type": "http_load_balancer",
+    "labels": {
+      "project_id": "PROJECT_ID",
+      "backend_service_name": "web-app-backend"
+    }
+  },
+  "httpRequest": {
+    "requestMethod": "GET",
+    "requestUrl": "https://example.com/",
+    "status": 200,
+    "remoteIp": "203.0.113.201",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+  },
+  "jsonPayload": {
+    "enforcedSecurityPolicy": {
+      "name": "web-app-armor-policy",
+      "priority": 2147483647,
+      "outcome": "ACCEPT",
+      "configuredAction": "ACCEPT"
+    }
+  }
+}
+
+Interpretation:
+  Standard request matched no WAF or rate limit rule, fell through to
+  the default allow rule (priority 2147483647). Normal traffic.
+
+================================================================
+  How to use these examples
+================================================================
+
+When reviewing Cloud Armor logs for the first time:
+
+1. Filter by enforcedSecurityPolicy.outcome="DENY" to see what was
+   actually blocked
+2. Filter by previewSecurityPolicy.outcome="DENY" to see what WOULD
+   have been blocked under rules still in preview
+3. For each rule (by priority), sample 10-20 matches and categorize as
+   expected attack, false positive, or ambiguous
+4. Tune false-positive rules using the patterns in the Cloud Armor
+   tuning checklist
+5. Promote tuned rules out of preview only when matches are clean

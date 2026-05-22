@@ -1,0 +1,49 @@
+==============================================================
+  Project IAM — Owner and Editor bindings
+==============================================================
+  [INFO]  roles/owner granted to: user:admin@example.com
+  [ISSUE] roles/editor granted to service account: serviceAccount:PROJECT_NUMBER-compute@developer.gserviceaccount.com
+
+==============================================================
+  Firewall — public ingress to sensitive ports
+==============================================================
+  [INFO]  allow-https allows 0.0.0.0/0 to web port(s) 443 — expected if no LB in front
+  [INFO]  allow-http allows 0.0.0.0/0 to web port(s) 80 — expected if no LB in front
+  [OK]    No firewall rules allow 0.0.0.0/0 to SSH or sensitive ports
+
+==============================================================
+  Cloud Armor — security policies
+==============================================================
+  [INFO]  Policy: web-app-armor-policy
+  [INFO]    2 rule(s) in preview mode (review and promote)
+
+==============================================================
+  Load balancers — SSL policies
+==============================================================
+  [OK]    web-app-https-proxy has SSL policy: restricted-tls12-policy
+
+==============================================================
+  Backend services — Cloud Armor attachment
+==============================================================
+  [OK]    web-app-backend has Cloud Armor: web-app-armor-policy
+  [ISSUE] api-backend has NO Cloud Armor policy attached
+
+==============================================================
+  Cloud Run — services accessible to allUsers
+==============================================================
+  [INFO]  public-web-app is publicly accessible (allUsers can invoke) — verify intended
+  [OK]    admin-dashboard is not publicly accessible
+
+==============================================================
+  Service accounts — default service accounts
+==============================================================
+  [INFO]  Default SA PROJECT_NUMBER-compute@developer.gserviceaccount.com is enabled — verify it is needed
+  [OK]    Default SA PROJECT_ID@appspot.gserviceaccount.com does not exist
+
+==============================================================
+  Summary
+==============================================================
+  2 issue(s) found. Review above for details.
+
+  Note: this script does not check every possible misconfiguration.
+  Review the checklists in this repository for a comprehensive audit.

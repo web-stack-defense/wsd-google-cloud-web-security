@@ -1,0 +1,310 @@
+# =============================================================================
+# IAM Least-Privilege Patterns for Web Workloads
+#
+# Repository: wsd-google-cloud-web-security
+# Maintained as part of Web Stack Defense — https://www.webstackdefense.com
+#
+# Reference IAM role bindings for the service accounts that commonly back
+# web workloads on Google Cloud. Each pattern is annotated with:
+#
+#   - What the service account is for
+#   - Which predefined roles to bind
+#   - The resource scope to bind at (project, secret, bucket, etc.)
+#   - What NOT to grant
+#
+# All role IDs are exact predefined role identifiers verified against
+# current Google Cloud documentation.
+#
+# Reference: https://cloud.google.com/iam/docs/understanding-roles
+# Reference: https://cloud.google.com/iam/docs/granting-changing-revoking-access
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# Environment setup
+# -----------------------------------------------------------------------------
+# Replace these placeholder values before running any command:
+#
+#   PROJECT_ID  - Your GCP project ID
+#   PROJECT_NUMBER - Your GCP project number (12-digit numeric)
+#
+# Service account naming convention used below:
+#   <purpose>-sa@PROJECT_ID.iam.gserviceaccount.com
+#
+# Common service accounts referenced:
+#   web-app-runtime-sa     - Runs the Cloud Run / GCE web application
+#   web-app-deployer-sa    - CI/CD deployment service account
+#   web-app-logs-writer-sa - Log shipper service account
+#   web-app-secrets-sa     - Reads application secrets
+# -----------------------------------------------------------------------------
+
+
+# =============================================================================
+# Pattern 1 — Cloud Run web application runtime service account
+# =============================================================================
+# Use case: Cloud Run service that serves a public web application.
+#
+# What it needs:
+#   - Read specific secrets from Secret Manager (NOT all secrets)
+#   - Write its own application logs
+#   - Nothing else
+#
+# What it does NOT need:
+#   - Compute Engine admin
+#   - Storage admin (use signed URLs or specific bucket grants instead)
+#   - Service Account User on other service accounts
+#   - Project-wide Editor or Owner
+# -----------------------------------------------------------------------------
+
+# Create the service account.
+# gcloud iam service-accounts create web-app-runtime-sa \
+#   --display-name="Web App Runtime" \
+#   --description="Runtime identity for the public web application" \
+#   --project=${PROJECT_ID}
+
+# Grant ability to write logs (project-level — log writing requires this scope).
+# gcloud projects add-iam-policy-binding ${PROJECT_ID} \
+#   --member="serviceAccount:web-app-runtime-sa@${PROJECT_ID}.iam.gserviceaccount.com" \
+#   --role="roles/logging.logWriter" \
+#   --condition=None
+
+# Grant access to SPECIFIC secrets only — NOT project-wide secret access.
+# Repeat this for each secret the application needs.
+# gcloud secrets add-iam-policy-binding SECRET_NAME \
+#   --member="serviceAccount:web-app-runtime-sa@${PROJECT_ID}.iam.gserviceaccount.com" \
+#   --role="roles/secretmanager.secretAccessor" \
+#   --condition=None \
+#   --project=${PROJECT_ID}
+
+# Wait 2-7 minutes for IAM propagation before testing.
+
+
+# =============================================================================
+# Pattern 2 — CI/CD deployer service account
+# =============================================================================
+# Use case: Build pipeline that deploys new revisions of the Cloud Run
+# service.
+#
+# What it needs:
+#   - Deploy new Cloud Run revisions (Cloud Run Developer)
+#   - Read container images from Artifact Registry
+#   - Act as the runtime service account when deploying
+#
+# What it does NOT need:
+#   - Project Owner or Editor
+#   - Access to production secrets (those are read by the runtime SA, not
+#     the deployer)
+#   - IAM admin
+# -----------------------------------------------------------------------------
+
+# gcloud iam service-accounts create web-app-deployer-sa \
+#   --display-name="Web App Deployer" \
+#   --description="CI/CD pipeline identity for deploying revisions" \
+#   --project=${PROJECT_ID}
+
+# Cloud Run Developer role — can create and update services.
+# gcloud projects add-iam-policy-binding ${PROJECT_ID} \
+#   --member="serviceAccount:web-app-deployer-sa@${PROJECT_ID}.iam.gserviceaccount.com" \
+#   --role="roles/run.developer" \
+#   --condition=None
+
+# Service Account User on the RUNTIME service account (required to deploy
+# a service that runs as the runtime SA). Scope this to the specific
+# service account, not project-wide.
+# gcloud iam service-accounts add-iam-policy-binding \
+#   web-app-runtime-sa@${PROJECT_ID}.iam.gserviceaccount.com \
+#   --member="serviceAccount:web-app-deployer-sa@${PROJECT_ID}.iam.gserviceaccount.com" \
+#   --role="roles/iam.serviceAccountUser" \
+#   --project=${PROJECT_ID}
+
+# Artifact Registry read access — scope to the specific repository, not
+# project-wide.
+# gcloud artifacts repositories add-iam-policy-binding REPO_NAME \
+#   --location=REGION \
+#   --member="serviceAccount:web-app-deployer-sa@${PROJECT_ID}.iam.gserviceaccount.com" \
+#   --role="roles/artifactregistry.reader" \
+#   --project=${PROJECT_ID}
+
+
+# =============================================================================
+# Pattern 3 — Public Cloud Run service invocation
+# =============================================================================
+# Use case: Cloud Run service that should be publicly accessible (the
+# public website).
+#
+# What it needs:
+#   - allUsers can invoke
+#
+# What it does NOT need:
+#   - allAuthenticatedUsers (this allows ANY Google account, not just
+#     unauthenticated users — almost always wrong for a public site)
+#
+# IMPORTANT: Granting `roles/run.invoker` to `allUsers` makes the service
+# publicly accessible. Verify this matches the intent before applying.
+# -----------------------------------------------------------------------------
+
+# gcloud run services add-iam-policy-binding SERVICE_NAME \
+#   --member="allUsers" \
+#   --role="roles/run.invoker" \
+#   --region=REGION \
+#   --project=${PROJECT_ID}
+
+
+# =============================================================================
+# Pattern 4 — Private Cloud Run service behind IAP
+# =============================================================================
+# Use case: Admin panel or staging environment that should be reachable
+# only by authenticated, authorized users.
+#
+# What it needs:
+#   - IAP service agent can invoke
+#   - Specific users granted IAP HTTPS Resource Accessor
+#
+# What it does NOT need:
+#   - allUsers invoker (would defeat the IAP protection)
+# -----------------------------------------------------------------------------
+
+# Grant IAP's service agent permission to invoke the Cloud Run service.
+# The IAP service agent is created automatically when IAP is enabled.
+# gcloud run services add-iam-policy-binding SERVICE_NAME \
+#   --member="serviceAccount:service-PROJECT_NUMBER@gcp-sa-iap.iam.gserviceaccount.com" \
+#   --role="roles/run.invoker" \
+#   --region=REGION \
+#   --project=${PROJECT_ID}
+
+# Grant a specific user permission to access through IAP.
+# gcloud iap web add-iam-policy-binding \
+#   --member="user:admin@example.com" \
+#   --role="roles/iap.httpsResourceAccessor" \
+#   --resource-type=backend-services \
+#   --service=BACKEND_SERVICE_NAME \
+#   --project=${PROJECT_ID}
+
+
+# =============================================================================
+# Pattern 5 — Secret Manager binding scope
+# =============================================================================
+# Always grant secretAccessor at the SECRET level, not the PROJECT level.
+#
+# A project-level secretAccessor binding allows the principal to read
+# every secret in the project. Almost never the right scope.
+#
+# WRONG (too broad):
+#
+#   gcloud projects add-iam-policy-binding PROJECT_ID \
+#     --member="serviceAccount:SA@PROJECT.iam.gserviceaccount.com" \
+#     --role="roles/secretmanager.secretAccessor"
+#
+# RIGHT (scoped to the specific secret):
+#
+#   gcloud secrets add-iam-policy-binding SECRET_NAME \
+#     --member="serviceAccount:SA@PROJECT.iam.gserviceaccount.com" \
+#     --role="roles/secretmanager.secretAccessor" \
+#     --condition=None
+#
+# The --condition=None flag suppresses the interactive IAM condition
+# prompt that gcloud opens by default. IAM conditions are powerful but
+# the prompt is noise in scripts.
+# -----------------------------------------------------------------------------
+
+
+# =============================================================================
+# Pattern 6 — Default service accounts
+# =============================================================================
+# Google Cloud creates two default service accounts automatically when
+# you enable certain APIs:
+#
+#   PROJECT_NUMBER-compute@developer.gserviceaccount.com   (Compute Engine)
+#   PROJECT_ID@appspot.gserviceaccount.com                  (App Engine)
+#
+# These default SAs are granted Editor role on the project by default,
+# which is the broadest possible role short of Owner.
+#
+# For production deployments:
+#
+#   1. Do NOT run workloads as the default service accounts
+#   2. Create purpose-specific service accounts (Patterns 1 and 2 above)
+#   3. Either revoke the default SA's Editor role, or disable the
+#      default SAs entirely
+#
+# Disable the default Compute Engine service account (if not in use):
+#
+#   gcloud iam service-accounts disable \
+#     PROJECT_NUMBER-compute@developer.gserviceaccount.com \
+#     --project=${PROJECT_ID}
+#
+# Verify what currently has Editor or Owner in the project:
+#
+#   gcloud projects get-iam-policy ${PROJECT_ID} \
+#     --flatten="bindings[].members" \
+#     --format="table(bindings.role,bindings.members)" \
+#     --filter="bindings.role:(roles/editor OR roles/owner)"
+# -----------------------------------------------------------------------------
+
+
+# =============================================================================
+# Pattern 7 — Reviewing IAM grants
+# =============================================================================
+# Use these commands to audit what permissions are currently in place.
+# All are read-only.
+#
+# List all IAM bindings on a project:
+#
+#   gcloud projects get-iam-policy ${PROJECT_ID}
+#
+# Find all places a specific principal has access:
+#
+#   gcloud asset search-all-iam-policies \
+#     --scope="projects/${PROJECT_ID}" \
+#     --query="policy:user:admin@example.com"
+#
+# Find everywhere a specific role is granted in the project:
+#
+#   gcloud asset search-all-iam-policies \
+#     --scope="projects/${PROJECT_ID}" \
+#     --query="policy.role.permissions:secretmanager.versions.access"
+#
+# List service accounts in the project:
+#
+#   gcloud iam service-accounts list --project=${PROJECT_ID}
+#
+# Review what a specific service account can do across the project:
+#
+#   gcloud projects get-iam-policy ${PROJECT_ID} \
+#     --flatten="bindings[].members" \
+#     --filter="bindings.members:web-app-runtime-sa@${PROJECT_ID}.iam.gserviceaccount.com" \
+#     --format="table(bindings.role)"
+# -----------------------------------------------------------------------------
+
+
+# =============================================================================
+# Common anti-patterns to avoid
+# =============================================================================
+#
+# AVOID: Granting Project Editor or Owner to a service account
+#   Both roles grant thousands of permissions across every service in the
+#   project. Use specific predefined roles instead.
+#
+# AVOID: Granting roles to allAuthenticatedUsers
+#   This allows ANY Google account, not just unauthenticated users. Almost
+#   always a mistake.
+#
+# AVOID: Granting roles to allUsers on private resources
+#   This makes the resource publicly accessible. Only use on intentionally
+#   public resources.
+#
+# AVOID: Project-level secretAccessor
+#   See Pattern 5. Always scope to the specific secret.
+#
+# AVOID: Granting Service Account Token Creator broadly
+#   This role allows impersonating other service accounts. A principal
+#   with this role on a privileged SA effectively HAS that SA's privileges.
+#
+# AVOID: Custom roles when a predefined role fits
+#   Custom roles add maintenance overhead. Use them only when no predefined
+#   role matches the required permissions.
+#
+# AVOID: Not setting --condition=None on add-iam-policy-binding
+#   The interactive condition prompt blocks scripts and is rarely needed.
+#   Explicitly pass --condition=None unless you actually want a condition.
+# =============================================================================

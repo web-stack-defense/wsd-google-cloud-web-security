@@ -1,0 +1,101 @@
+# =============================================================================
+# Sample IAM Policy Export — Project-Level
+# (Sanitized — all values are placeholders)
+# =============================================================================
+#
+# This is the structure returned by:
+#   gcloud projects get-iam-policy PROJECT_ID --format=yaml
+#
+# Use this format to recognize what to look for during IAM review.
+
+bindings:
+- members:
+  - user:admin@example.com
+  - user:secondary-admin@example.com
+  role: roles/owner
+
+- members:
+  - user:developer@example.com
+  - group:engineering@example.com
+  role: roles/editor
+
+# Note: roles/editor on the default Compute Engine service account is
+# the GCP default — but it is broader than most workloads need. Consider
+# disabling the default SA and using purpose-specific service accounts.
+- members:
+  - serviceAccount:PROJECT_NUMBER-compute@developer.gserviceaccount.com
+  role: roles/editor
+
+# Cloud Run runtime SA — least-privilege bindings only.
+- members:
+  - serviceAccount:web-app-runtime-sa@PROJECT_ID.iam.gserviceaccount.com
+  role: roles/logging.logWriter
+
+- members:
+  - serviceAccount:web-app-runtime-sa@PROJECT_ID.iam.gserviceaccount.com
+  role: roles/monitoring.metricWriter
+
+# Deployer SA — Cloud Run Developer for deploying revisions.
+- members:
+  - serviceAccount:web-app-deployer-sa@PROJECT_ID.iam.gserviceaccount.com
+  role: roles/run.developer
+
+- members:
+  - serviceAccount:web-app-deployer-sa@PROJECT_ID.iam.gserviceaccount.com
+  role: roles/artifactregistry.reader
+
+# Security review — read-only access to IAM, useful for periodic audits.
+- members:
+  - user:security-reviewer@example.com
+  role: roles/iam.securityReviewer
+
+# Logs viewer for the on-call team.
+- members:
+  - group:oncall@example.com
+  role: roles/logging.viewer
+
+etag: BwYhPlaceholderEtagValue=
+version: 1
+
+# =============================================================================
+# What to look for in this output
+# =============================================================================
+#
+# Red flags:
+#
+#   - allUsers or allAuthenticatedUsers in any binding at the project level
+#   - Service accounts with roles/owner or roles/editor (default Compute SA
+#     and App Engine default SA may have Editor by default — verify intentional)
+#   - User accounts with roles/owner that you don't recognize
+#   - Many members in a single privileged binding (use groups instead)
+#   - Service account names that don't describe their purpose
+#
+# Good signs:
+#
+#   - Service accounts have specific, narrow predefined roles (logging.logWriter,
+#     run.developer, etc.) instead of broad Editor or Owner
+#   - Secret Manager bindings are NOT at the project level (they should be at
+#     the secret level — those don't appear in this output)
+#   - Read-only roles (iam.securityReviewer, logging.viewer) are granted to
+#     people who need observability but not write access
+# =============================================================================
+
+# =============================================================================
+# Sample Secret-Level IAM Export
+# =============================================================================
+#
+# Returned by:
+#   gcloud secrets get-iam-policy SECRET_NAME --project=PROJECT_ID --format=yaml
+#
+# Secret-level bindings are scoped to a single secret, NOT the whole project.
+# This is the correct scope for secretAccessor.
+
+# bindings:
+# - members:
+#   - serviceAccount:web-app-runtime-sa@PROJECT_ID.iam.gserviceaccount.com
+#   role: roles/secretmanager.secretAccessor
+# etag: BwYhPlaceholderEtagValue=
+# version: 1
+
+# Notice: ONE binding, ONE service account, ONE role. The runtime service
+# account can read this specific secret and nothing else.
